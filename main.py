@@ -14,6 +14,7 @@ import sys
 import time
 
 import wandb
+import numpy as np
 
 from dl_har_analysis.analysis import run_train_analysis, run_test_analysis
 
@@ -21,23 +22,30 @@ from dl_har_model.train import split_validate, loso_cross_validate
 from utils import Logger, wandb_logging, paint
 from importlib import import_module
 
-SEEDS = [1, 2, 3, 4, 5]
-WANDB_PROJECT = 'work-in-progress'
-WANDB_ENTITY = 'siegen-sussex-dl-for-har'
+# SEEDS = [1, 2, 3, 4, 5]
+SEEDS = [1]
+WANDB_PROJECT = 'realdisp_wimusim_aug'
+WANDB_ENTITY = 'nobuyuki'
 
 N_CLASSES = {'opportunity': 18,
              'pamap2': 12,
              'skoda': 11,
              'hhar': 7,
              'rwhar': 8,
-             'shlpreview': 9
+             'shlpreview': 9,
+             'realdisp': 34,
+             'realdisp_wimusim_aug': 34,
+             'realdisp_trad_aug': 34,
              }
 N_CHANNELS = {'opportunity': 113,
               'pamap2': 52,
               'skoda': 60,
               'hhar': 3,
               'rwhar': 3,
-              'shlpreview': 22
+              'shlpreview': 22,
+              'realdisp': 12,
+              'realdisp_wimusim_aug': 12,
+              'realdisp_trad_aug': 12,
               }
 
 
@@ -108,10 +116,16 @@ def get_args():
         default=False, required=False)
     parser.add_argument(
         '--unweighted', action='store_false', help='Flag indicating to use unweighted loss.',
-        default=True, required=False)
+        default=False, required=False)
     parser.add_argument(
         '--save_checkpoints', action='store_true', help='Flag indicating to use save model checkpoints.',
         default=False, required=False)
+    parser.add_argument(
+        '--lazy_load', action='store_true', help='Flag indicating to use lazy_load when loading dataset',
+        default=False, required=False)
+    parser.add_argument(
+        '--scaling', type=str, help='Scaling method to apply to data. Default standardize.',
+        default='standardize', required=False)
 
     args = parser.parse_args()
 
@@ -126,12 +140,31 @@ module = import_module(f'dl_har_model.models.{args.model}')
 print(paint(f"Applied Model: "))
 Model = getattr(module, args.model)
 
+if args.scaling == "normalize":
+    if args.dataset == "realdisp_wimusim_aug":
+        normalize_min_vals = np.array([-191.40, -149.60, -200.13, -39.89, -39.72, -29.82,
+                                       -152.66, -179.34, -180.48, -54.94, -52.13, -41.79])
+        normalize_max_vals = np.array([129.70, 177.69, 149.59, 44.65, 27.28, 27.98,
+                                       178.96, 137.98, 137.98, 53.51, 40.40, 40.40])
+    elif args.dataset == "realdisp_trad_aug":
+        normalize_min_vals = np.array([-83.12, -75.45, -84.19, -28.08, -17.18, -17.42,
+                                       -83.10, -82.85, -74.80, -27.56, -17.54, -17.21])
+        normalize_max_vals = np.array([68.61, 91.71, 85.33, 28.08, 16.30, 19.33,
+                                       66.59, 77.25, 81.94, 27.56, 17.21, 18.85])
+else:
+    normalize_min_vals = None
+    normalize_max_vals = None
+
 config_dataset = {
     "dataset": args.dataset,
     "window": args.window_size,
     "stride": args.window_step_train,
     "stride_test": args.window_step_test,
     "path_processed": f"data/{args.dataset}",
+    "lazy_load": args.lazy_load,
+    "scaling": args.scaling,
+    "min_vals": normalize_min_vals,
+    "max_vals": normalize_max_vals
 }
 
 train_args = {
@@ -192,6 +225,8 @@ if args.valid_type == 'split':
 elif args.valid_type == 'loso':
     train_results, test_results, preds = \
         loso_cross_validate(model, train_args, config_dataset, seeds=SEEDS, verbose=True)
+else:
+    raise ValueError(f"Invalid validation type {args.valid_type}")
 
 run_train_analysis(train_results)
 run_test_analysis(test_results)
