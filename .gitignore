@@ -129,4 +129,7 @@ dmypy.json
 .pyre/
 
 data
-./.idea
+.idea/
+notebooks/
+wandb/
+logs/
