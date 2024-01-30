@@ -14,7 +14,6 @@ import sys
 import time
 
 import wandb
-import numpy as np
 
 from dl_har_analysis.analysis import run_train_analysis, run_test_analysis
 
@@ -25,7 +24,7 @@ from importlib import import_module
 # SEEDS = [1, 2, 3, 4, 5]
 SEEDS = [1]
 # WANDB_PROJECT = 'realdisp_wimusim_aug'
-WANDB_PROJECT = 'debug'
+WANDB_PROJECT = 'realdisp_ideal_n_sub'
 WANDB_ENTITY = 'nobuyuki'
 
 N_CLASSES = {'opportunity': 18,
@@ -37,6 +36,7 @@ N_CLASSES = {'opportunity': 18,
              'realdisp': 34,
              'realdisp_wimusim_aug': 34,
              'realdisp_trad_aug': 34,
+             'realdisp_ideal_n_sub': 34,
              }
 N_CHANNELS = {'opportunity': 113,
               'pamap2': 52,
@@ -47,6 +47,7 @@ N_CHANNELS = {'opportunity': 113,
               'realdisp': 12,
               'realdisp_wimusim_aug': 12,
               'realdisp_trad_aug': 12,
+              'realdisp_ideal_n_sub': 12,
               }
 
 
@@ -130,6 +131,8 @@ def get_args():
     parser.add_argument(
         '--keep-scaling-params', action='store_true', help='Flag indicating to keep scaling parameters.',
         default=False, required=False)
+    parser.add_argument('--train_prefix', type=str, help='Prefix for training data. Default train.',
+                        default='train', required=False)
 
     args = parser.parse_args()
 
@@ -152,6 +155,7 @@ config_dataset = {
     "path_processed": f"data/{args.dataset}",
     "lazy_load": args.lazy_load,
     "scaling": args.scaling,
+    "prefix": args.train_prefix,
 }
 
 train_args = {
