@@ -23,8 +23,7 @@ from importlib import import_module
 
 # SEEDS = [1, 2, 3, 4, 5]
 SEEDS = [1]
-# WANDB_PROJECT = 'realdisp_wimusim_aug'
-WANDB_PROJECT = 'realdisp_ideal_n_sub'
+WANDB_PROJECT = 'realdisp_wimusim_aug'
 WANDB_ENTITY = 'nobuyuki'
 
 N_CLASSES = {'opportunity': 18,
