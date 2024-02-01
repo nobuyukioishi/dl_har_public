@@ -200,7 +200,7 @@ log_date = time.strftime('%Y%m%d')
 log_timestamp = time.strftime('%H%M%S')
 
 if args.wandb:
-    wandb.init(project=WANDB_PROJECT, entity=WANDB_ENTITY, config={**config_dataset, **train_args})
+    wandb.init(project=WANDB_PROJECT, entity=WANDB_ENTITY, config={"model": args.model, **config_dataset, **train_args})
 
 model = Model(N_CHANNELS[args.dataset], N_CLASSES[args.dataset], args.dataset, f"/{log_date}/{log_timestamp}").cuda()
 
