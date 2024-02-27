@@ -21,7 +21,7 @@ from dl_har_model.train import split_validate, loso_cross_validate
 from utils import Logger, wandb_logging, paint
 from importlib import import_module
 
-SEEDS = [1, 2, 3]
+SEEDS = [1]
 WANDB_ENTITY = 'nobuyuki'
 
 N_CLASSES = {'opportunity': 18,
@@ -35,6 +35,7 @@ N_CLASSES = {'opportunity': 18,
              'realdisp_trad_aug': 34,
              'realdisp_ideal_n_sub': 34,
              }
+
 N_CHANNELS = {'opportunity': 113,
               'pamap2': 52,
               'skoda': 60,
