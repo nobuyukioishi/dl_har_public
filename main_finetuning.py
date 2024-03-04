@@ -266,7 +266,7 @@ if args.wandb:
         "val_fw_init": fw_val
     }
     wandb.init(project=WANDB_PROJECT, entity=WANDB_ENTITY,
-               config={"model": args.model, **config_dataset, **train_args, **initial_results})
+               config={"model": args.model, "seed": args.seed, **config_dataset, **train_args, **initial_results})
 
 
 print_freq = 100
