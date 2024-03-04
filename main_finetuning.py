@@ -12,37 +12,29 @@ import json
 import os
 import sys
 import time
+import torch
+import pathlib
 
+import numpy as np
 import wandb
 
-from dl_har_analysis.analysis import run_train_analysis, run_test_analysis
+from dl_har_model.eval import eval_one_epoch
+from dl_har_model.train import train_one_epoch
 
-from dl_har_model.train import split_validate, loso_cross_validate
 from utils import Logger, wandb_logging, paint
 from importlib import import_module
+from dl_har_dataloader.datasets import SensorDataset
+from torch.utils.data import DataLoader
 
-SEEDS = [1]
 WANDB_ENTITY = 'nobuyuki'
 
-N_CLASSES = {'opportunity': 18,
-             'pamap2': 12,
-             'skoda': 11,
-             'hhar': 7,
-             'rwhar': 8,
-             'shlpreview': 9,
-             'realdisp': 34,
+N_CLASSES = {
              'realdisp_wimusim_aug': 34,
              'realdisp_trad_aug': 34,
              'realdisp_ideal_n_sub': 34,
              }
 
-N_CHANNELS = {'opportunity': 113,
-              'pamap2': 52,
-              'skoda': 60,
-              'hhar': 3,
-              'rwhar': 3,
-              'shlpreview': 22,
-              'realdisp': 12,
+N_CHANNELS = {
               'realdisp_wimusim_aug': 12,
               'realdisp_trad_aug': 12,
               'realdisp_ideal_n_sub': 12,
@@ -132,7 +124,9 @@ def get_args():
     parser.add_argument('--train_prefix', type=str, help='Prefix for training data. Default train.',
                         default='train', required=False)
     parser.add_argument('--wandb-project-name', type=str, help='Wandb project name.', default='wandb-project', required=False)
-
+    parser.add_argument("--checkpoint-path", type=str, help="Path to a checkpoint to load.", default=None, required=False)
+    parser.add_argument("--subject-id", type=int, help="Subject ID to fine-tune.", default=None, required=True)
+    parser.add_argument("--seed", type=int, help="Random seed.", default=1, required=False)
     args = parser.parse_args()
 
     return args
@@ -146,6 +140,8 @@ module = import_module(f'dl_har_model.models.{args.model}')
 print(paint(f"Applied Model: "))
 Model = getattr(module, args.model)
 
+
+
 config_dataset = {
     "dataset": args.dataset,
     "window": args.window_size,
@@ -154,7 +150,8 @@ config_dataset = {
     "path_processed": f"data/{args.dataset}",
     "lazy_load": args.lazy_load,
     "scaling": args.scaling,
-    "prefix": args.train_prefix,
+    "mean": np.array([-2.43506481, 2.67243986, -1.90483712, 0.03534253, 0.00532397, 0.00616601, -3.99648382, -1.93164316, -0.05685239, -0.03086638,  0.01071271, 0.01518551]), # To be loaded from the train dataset
+    "std": np.array([6.98216677, 6.29808711, 6.10557477, 1.16950008, 1.18748655, 1.30134347, 6.64125895, 6.44705467, 5.98579538, 1.22379754, 1.14913085, 1.2805076]), # To be loaded from the train dataset
 }
 
 train_args = {
@@ -172,11 +169,12 @@ train_args = {
     "loss": args.loss,
     "smoothing": args.smoothing,
     "weight_decay": args.weight_decay,
-    "save_checkpoints": args.save_checkpoints
+    "save_checkpoints": args.save_checkpoints,
+    "subject_id": args.subject_id
 }
 
 config = dict(
-    seeds=SEEDS,
+    seeds=[args.seed],
     model=args.model,
     valid_type=args.valid_type,
     batch_size_train=args.batch_size_train,
@@ -199,34 +197,98 @@ config = dict(
 log_date = time.strftime('%Y%m%d')
 log_timestamp = time.strftime('%H%M%S')
 
-if args.wandb:
-    WANDB_PROJECT = args.wandb_project_name
-    wandb.init(project=WANDB_PROJECT, entity=WANDB_ENTITY, config={"model": args.model, **config_dataset, **train_args})
-
+# Load the model from the checkopoint
+checkpoint_path = pathlib.Path(args.checkpoint_path)
+assert checkpoint_path.exists(), f"Checkpoint path {checkpoint_path} does not exist."
 model = Model(N_CHANNELS[args.dataset], N_CLASSES[args.dataset], args.dataset, f"/{log_date}/{log_timestamp}").cuda()
+model.path_checkpoints = checkpoint_path
+path_checkpoint = model.path_checkpoints / "checkpoint_best.pth"
+
+# check if checkpoint exists
+if not path_checkpoint.exists():
+    raise ValueError(f"Checkpoint {path_checkpoint} does not exist")
+
+checkpoint = torch.load(path_checkpoint)
+model.load_state_dict(checkpoint["model_state_dict"])
 
 # saves logs to a file (standard output redirected)
 if args.logging:
     sys.stdout = Logger(os.path.join(model.path_logs, 'log'))
 print(model)
 
-if args.valid_type == 'split':
-    train_results, test_results, preds = \
-        split_validate(model, train_args, config_dataset, seeds=SEEDS, verbose=True, keep_scaling_params=args.keep_scaling_params)
-elif args.valid_type == 'loso':
-    train_results, test_results, preds = \
-        loso_cross_validate(model, train_args, config_dataset, seeds=SEEDS, verbose=True)
-else:
-    raise ValueError(f"Invalid validation type {args.valid_type}")
+subject_id = args.subject_id
+batch_size = args.batch_size_train
+print(f"train prefix: train-{subject_id}-ft")
+print(f"val prefix: val-{subject_id}")
 
-run_train_analysis(train_results)
-run_test_analysis(test_results)
+train_ft_dataset = SensorDataset(prefix=f"train-{subject_id}-ft", **config_dataset)
+if subject_id in [14, 15, 16, 17]:
+    val_dataset = SensorDataset(prefix=f'val-{subject_id}', **config_dataset)
+elif subject_id in [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 14]:
+    val_dataset = SensorDataset(prefix=f'test-{subject_id}', **config_dataset)
+else:
+    raise ValueError(f"Invalid subject ID: {subject_id}")
+
+loader_train_ft = DataLoader(train_ft_dataset, batch_size, True, pin_memory=True, worker_init_fn=np.random.seed(int(args.seed)))
+loader_val = DataLoader(val_dataset, batch_size, False, pin_memory=True, worker_init_fn=np.random.seed(int(args.seed)))
+
+optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+
+
+criterion = torch.nn.CrossEntropyLoss()
+
+freeze = False
+# Freeze the layers except for the classifier
+if freeze:
+    for name, param in model.named_parameters():
+        if 'classifier' in name:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
+
+print("Check the initial results on validation set")
+loss_ft, acc_ft, fm_ft, fw_ft = eval_one_epoch(model, loader_train_ft, criterion)
+print(f"\tTrain: loss: {loss_ft:.3f}, acc: {acc_ft:.3f}, fm: {fm_ft:.3f}, fw: {fw_ft:.3f}")
+loss_val, acc_val, fm_val, fw_val = eval_one_epoch(model, loader_val, criterion)
+print(f"\t  Val: loss: {loss_val:.3f}, acc: {acc_val:.3f}, fm: {fm_val:.3f}, fw: {fw_val:.3f}")
+
 
 if args.wandb:
-    wandb_logging(train_results, test_results, {**config_dataset, **train_args})
+    WANDB_PROJECT = args.wandb_project_name
+    initial_results = {
+        "train_loss_init": loss_ft,
+        "train_acc_init": acc_ft,
+        "train_fm_init": fm_ft,
+        "train_fw_init": fw_ft,
+        "val_loss_init": loss_val,
+        "val_acc_init": acc_val,
+        "val_fm_init": fm_val,
+        "val_fw_init": fw_val
+    }
+    wandb.init(project=WANDB_PROJECT, entity=WANDB_ENTITY,
+               config={"model": args.model, **config_dataset, **train_args, **initial_results})
 
-if args.save_results:
-    train_results.to_csv(os.path.join(model.path_logs, 'train_results.csv'), index=False)
-    if test_results is not None:
-        test_results.to_csv(os.path.join(model.path_logs, 'test_results.csv'), index=False)
-    preds.to_csv(os.path.join(model.path_logs, 'preds.csv'), index=False)
+
+print_freq = 100
+centerloss = False
+lr_cent = 1e-4
+beta = 0.5,
+mixup = False,
+alpha = 0.5,
+verbose = False
+for i in range(train_args["epochs"]):
+    print(f"Epoch {i+1}")
+    train_one_epoch(model, loader_train_ft, criterion, optimizer, print_freq, centerloss, lr_cent, beta, mixup, alpha, verbose)
+    loss_ft, acc_ft, fm_ft, fw_ft = eval_one_epoch(model, loader_train_ft, criterion)
+    print(f"\tTrain: loss: {loss_ft:.3f}, acc: {acc_ft:.3f}, fm: {fm_ft:.3f}, fw: {fw_ft:.3f}")
+    loss_val, acc_val, fm_val, fw_val = eval_one_epoch(model, loader_val, criterion)
+    print(f"\t  Val: loss: {loss_val:.3f}, acc: {acc_val:.3f}, fm: {fm_val:.3f}, fw: {fw_val:.3f}")
+    if args.wandb:
+        wandb.log({"train_loss": loss_ft,
+                   "train_acc": acc_ft,
+                   "train_fm": fm_ft,
+                   "train_fw": fw_ft,
+                   "val_loss": loss_val,
+                   "val_acc": acc_val,
+                   "val_fm": fm_val,
+                   "val_fw": fw_val})
