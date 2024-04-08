@@ -21,6 +21,9 @@ from dl_har_model.train import split_validate, loso_cross_validate
 from utils import Logger, wandb_logging, paint
 from importlib import import_module
 
+from dl_har_dataloader.augmentation import jitter, scaling, permutation, rotate, time_warp, magnitude_warp
+
+
 SEEDS = [1, 2, 3]
 WANDB_ENTITY = 'nobuyuki'
 
@@ -46,6 +49,15 @@ N_CHANNELS = {'opportunity': 113,
               'realdisp_trad_aug': 12,
               'realdisp_ideal_n_sub': 12,
               }
+
+aug_dict = {
+    "jitter": jitter,
+    "scaling": scaling,
+    "permutation": permutation,
+    "rotate": rotate,
+    "time_warp": time_warp,
+    "magnitude_warp": magnitude_warp
+}
 
 
 def get_args():
@@ -131,7 +143,13 @@ def get_args():
     parser.add_argument('--train_prefix', type=str, help='Prefix for training data. Default train.',
                         default='train', required=False)
     parser.add_argument('--wandb-project-name', type=str, help='Wandb project name.', default='wandb-project', required=False)
+    parser.add_argument("--aug_list", nargs='+', help="List of augmentation functions to apply to the data. Default None", default=None, required=False)
+    parser.add_argument("--aug_prob", nargs='+', help="List of probabilities for each augmentation function. Default None", default=None, required=False)
+    parser.add_argument("--aug_params", type=json.loads, help="List of parameter dictionaries for each augmentation. Default None", default=None, required=False)
 
+    # "aug_list": [jitter, permutation],
+    # "aug_prob": [0, 1],
+    # "aug_params": [{"sigma": 0.2}, {"max_segments": 5, "seg_mode": "equal"}],
     args = parser.parse_args()
 
     return args
@@ -155,6 +173,20 @@ config_dataset = {
     "scaling": args.scaling,
     "prefix": args.train_prefix,
 }
+
+
+# Augmentation settings
+if args.aug_list is not None:
+    config_dataset["aug_list"] = [aug_dict[key] for key in args.aug_list]
+    if args.aug_prob is not None:
+        config_dataset["aug_prob"] = [float(prob) for prob in args.aug_prob]
+    else:
+        config_dataset["aug_prob"] = [0.0 for _ in range(len(args.aug_list))]
+
+    if args.aug_params is not None:
+        config_dataset["aug_params"] = args.aug_params
+    else:
+        config_dataset["aug_params"] = [None for _ in range(len(args.aug_list))]
 
 train_args = {
     "batch_size_train": args.batch_size_train,
