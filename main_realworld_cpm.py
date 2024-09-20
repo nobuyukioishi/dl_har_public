@@ -6,6 +6,9 @@
 # Author: Lloyd Pellatt
 # Email: lp349@sussex.ac.uk
 ##################################################
+import os
+
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 import argparse
 import json
@@ -21,7 +24,14 @@ from dl_har_model.train import split_validate, loso_cross_validate
 from utils import Logger, wandb_logging, paint
 from importlib import import_module
 
-# SEEDS = [1, 2, 3]
+import torch
+
+from wimusim.dataset_configs.realworld import consts as rw_consts
+from wimusim.dataset_cpm import CPM
+import pickle
+
+import numpy as np
+
 SEEDS = [1, 2, 3]
 WANDB_ENTITY = "nobuyuki"
 
@@ -39,6 +49,7 @@ N_CLASSES = {
     "realdisp_ideal": 34,
     "realdisp_self": 34,
     "realworld_cpm": 8,
+    "realworld_cpm": 8,
 }
 N_CHANNELS = {
     "opportunity": 113,
@@ -53,7 +64,8 @@ N_CHANNELS = {
     "realdisp_ideal_n_sub": 12,
     "realdisp_ideal": 12,
     "realdisp_self": 12,
-    "realworld_cpm": 21,  # 3 (AccXYZ) * 7 (IMUs)
+    "realworld_cpm": 21,  # 3 (Acc) * 7 (IMUs)
+    "realworld_cpm": 21,  # 3 (Acc) * 7 (IMUs)
 }
 
 
@@ -303,9 +315,9 @@ def get_args():
     )
 
     parser.add_argument(
-        "--use_sim",
+        "--use-sim",
         action="store_true",
-        help="Flag indicating to use unweighted loss.",
+        help="Whether to use simulated data or not.",
         default=False,
         required=False,
     )
@@ -334,6 +346,20 @@ def get_args():
         "--paramix",
         action="store_true",
         help="Whether to use paramix or not.",
+        default=False,
+        required=False,
+    )
+    parser.add_argument(
+        "--n_samples",
+        type=int,
+        help="Print frequency (batches). Default 256.",
+        default=256,
+        required=False,
+    )
+    parser.add_argument(
+        "--early_stopping",
+        action="store_true",
+        help="Flag indicating to use early stopping.",
         default=False,
         required=False,
     )
@@ -369,86 +395,78 @@ sim_config = {
     "window": args.window_size,
     "stride": args.window_step_train,
     "verbose": False,
-    "resample_factor": 2,
+    "resample_factor": 1,
+    "n_samples": args.n_samples,
 }
 
-# WIMUSim Augmentation settings
-if args.sim_aug_list is not None:
-    sim_config["aug_list"] = args.sim_aug_list
-    if args.sim_aug_prob is not None:
-        sim_config["aug_prob"] = [float(prob) for prob in args.sim_aug_prob]
-    else:
-        sim_config["aug_prob"] = [0.5 for _ in range(len(args.sim_aug_list))]
-
-    if args.sim_aug_params is not None:
-        sim_config["aug_params"] = json.loads(args.sim_aug_params)
-    else:
-        sim_config["aug_params"] = [None for _ in range(len(args.sim_aug_list))]
 
 # print(sim_config)
+print(args.dataset == "realworld_cpm" and args.use_sim)
+if args.dataset == "realworld_cpm" and args.use_sim:
+    print("Use subject 1 to 13 for WIMUSim CPM")
+    # sim_config["subject_ids"] = list(range(1, 14))
+    # sim_config["subject_ids"] = list(range(1, 14))
 
-if args.dataset == "realdisp_ideal" and args.use_sim:
-    print("Use ideal scenario (subject 1-10) for WIMUSim augmentation")
-    sim_config["wimusim_params_path_dict"] = {
-        1: "../WIMUSim/data/REALDISP/saved_params/ideal_sub1_wimusim_params_opt_with_labels.pt",
-        2: "../WIMUSim//data/REALDISP/saved_params/ideal_sub2_wimusim_params_opt_with_labels.pt",
-        3: "../WIMUSim//data/REALDISP/saved_params/ideal_sub3_wimusim_params_opt_with_labels.pt",
-        4: "../WIMUSim//data/REALDISP/saved_params/ideal_sub4_wimusim_params_opt_with_labels.pt",
-        5: "../WIMUSim//data/REALDISP/saved_params/ideal_sub5_wimusim_params_opt_with_labels.pt",
-        6: "../WIMUSim//data/REALDISP/saved_params/ideal_sub6_wimusim_params_opt_with_labels.pt",
-        7: "../WIMUSim//data/REALDISP/saved_params/ideal_sub7_wimusim_params_opt_with_labels.pt",
-        8: "../WIMUSim//data/REALDISP/saved_params/ideal_sub8_wimusim_params_opt_with_labels.pt",
-        9: "../WIMUSim//data/REALDISP/saved_params/ideal_sub9_wimusim_params_opt_with_labels.pt",
-        10: "../WIMUSim//data/REALDISP/saved_params/ideal_sub10_wimusim_params_opt_with_labels.pt",
+    # Initialize the WIMUSimDataset (This needs to be dataset independent)
+    realworld_path = "/mnt/93f1818a-0250-400e-a86c-210a9a06e78b/realworld2016_dataset/"
+    opt_files_dir = os.path.join(realworld_path, "processed/wimusim_params/opt")
+
+    with open(os.path.join(opt_files_dir, "opt_files_dict.pkl"), "rb") as f:
+        opt_files_dict = pickle.load(f)
+
+    act_id_dict = {
+        act_name: act_idx for act_idx, act_name in enumerate(rw_consts.ACTIVITY_LIST)
     }
-elif args.dataset == "realdisp_self" and args.use_sim:
-    print("Use ideal scenario (subject 1-17) for WIMUSim augmentation")
-    sim_config["wimusim_params_path_dict"] = {
-        1: "../WIMUSim/data/REALDISP/saved_params/ideal_sub1_wimusim_params_opt_with_labels.pt",
-        2: "../WIMUSim//data/REALDISP/saved_params/ideal_sub2_wimusim_params_opt_with_labels.pt",
-        3: "../WIMUSim//data/REALDISP/saved_params/ideal_sub3_wimusim_params_opt_with_labels.pt",
-        4: "../WIMUSim//data/REALDISP/saved_params/ideal_sub4_wimusim_params_opt_with_labels.pt",
-        5: "../WIMUSim//data/REALDISP/saved_params/ideal_sub5_wimusim_params_opt_with_labels.pt",
-        6: "../WIMUSim//data/REALDISP/saved_params/ideal_sub6_wimusim_params_opt_with_labels.pt",
-        7: "../WIMUSim//data/REALDISP/saved_params/ideal_sub7_wimusim_params_opt_with_labels.pt",
-        8: "../WIMUSim//data/REALDISP/saved_params/ideal_sub8_wimusim_params_opt_with_labels.pt",
-        9: "../WIMUSim//data/REALDISP/saved_params/ideal_sub9_wimusim_params_opt_with_labels.pt",
-        10: "../WIMUSim//data/REALDISP/saved_params/ideal_sub10_wimusim_params_opt_with_labels.pt",
-        11: "../WIMUSim/data/REALDISP/saved_params/ideal_sub11_wimusim_params_opt_with_labels.pt",
-        12: "../WIMUSim//data/REALDISP/saved_params/ideal_sub12_wimusim_params_opt_with_labels.pt",
-        13: "../WIMUSim//data/REALDISP/saved_params/ideal_sub13_wimusim_params_opt_with_labels.pt",
-        14: "../WIMUSim//data/REALDISP/saved_params/ideal_sub14_wimusim_params_opt_with_labels.pt",
-        15: "../WIMUSim//data/REALDISP/saved_params/ideal_sub15_wimusim_params_opt_with_labels.pt",
-        16: "../WIMUSim//data/REALDISP/saved_params/ideal_sub16_wimusim_params_opt_with_labels.pt",
-        17: "../WIMUSim//data/REALDISP/saved_params/ideal_sub17_wimusim_params_opt_with_labels.pt",
-    }
-else:
-    if args.use_sim:
-        raise ValueError(f"Invalid evaluation scenario {args.dataset}")
 
+    B_list, P_list, D_list, H_list = [], [], [], []
+    groups = []  # Used to control the sampling process
+    activity_name = []
+    target_list = []
 
-# Augmentation settings
-if args.aug_list is not None:
-    config_dataset["aug_list"] = args.aug_list
-    if args.aug_prob is not None:
-        config_dataset["aug_prob"] = [float(prob) for prob in args.aug_prob]
-    else:
-        config_dataset["aug_prob"] = [0.0 for _ in range(len(args.aug_list))]
+    stop_id = int(config_dataset["prefix"].split("-")[1])
+    print(f"Stop ID: {stop_id}")
+    for sbj_id_str, sbj_opt_dict in opt_files_dict.items():
+        for act_name, filenames in sbj_opt_dict.items():
+            print(f"{sbj_id_str} - {act_name}: {len(filenames)} files")
+            for filename in filenames:
+                with open(os.path.join(opt_files_dir, filename), "rb") as f:
+                    opt = pickle.load(f)
+                    B_list.append(opt.env.B)
+                    P_list.append(opt.env.P)
+                    H_list.append(opt.env.H)
 
-    if args.aug_params is not None:
-        config_dataset["aug_params"] = json.loads(args.aug_params)
-    else:
-        config_dataset["aug_params"] = [None for _ in range(len(args.aug_list))]
+                    D_list.append(opt.env.D)
+                    activity_name.append(
+                        act_name
+                    )  # activity_name corresponds to the dynamics parameter
+                    groups.append(act_id_dict[act_name])
+                    target_list.append(
+                        torch.full(
+                            (opt.env.D.n_samples,),
+                            act_id_dict[act_name],
+                            dtype=torch.int64,
+                        )
+                    )
 
-# This will be used to determine the rot_list in the WIMUSim augmentation
-# You can ignore the assertion if you don't use the rotation augmentation
-if args.dataset == "realdisp_ideal":
-    scenario = "ideal"
-elif args.dataset == "realdisp_self":
-    scenario = "self"
-else:
-    scenario = None
-    assert "Unexpected scenario."
+        if sbj_id_str == f"p{stop_id:03d}":
+            print(f"Finish loading WIMUSim params. - stop after loading p{stop_id:03d}")
+            break
+
+    train_sim_data = CPM(
+        B_list=B_list,
+        D_list=D_list,
+        P_list=P_list,
+        H_list=H_list,
+        groups=groups,
+        target_list=target_list,
+        window=30,  # 1 seconds
+        stride=15,  # 0.5 seconds
+        acc_only=True,
+    )  # use activity_name for the
+    train_sim_data.generate_data(
+        n_combinations=100  # Just for initialization. Can be any number.
+    )  # This should be runned first before passed to the dataloader.
+
 
 train_args = {
     "batch_size_train": args.batch_size_train,
@@ -467,7 +485,7 @@ train_args = {
     "weight_decay": args.weight_decay,
     "save_checkpoints": args.save_checkpoints,
     "paramix": args.paramix,
-    "scenario": scenario,
+    "early_stopping": args.early_stopping,
 }
 
 config = dict(
@@ -530,6 +548,7 @@ if args.valid_type == "split":
         model,
         train_args,
         config_dataset,
+        sim_data=train_sim_data if args.use_sim else None,
         seeds=SEEDS,
         verbose=True,
         keep_scaling_params=args.keep_scaling_params,
