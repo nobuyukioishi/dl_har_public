@@ -357,6 +357,13 @@ def get_args():
         required=False,
     )
     parser.add_argument(
+        "--sim_first",
+        action="store_true",
+        help="Whether to use virtual IMU first for trainig.",
+        default=False,
+        required=False,
+    )
+    parser.add_argument(
         "--early_stopping",
         action="store_true",
         help="Flag indicating to use early stopping.",
@@ -397,6 +404,7 @@ sim_config = {
     "verbose": False,
     "resample_factor": 1,
     "n_samples": args.n_samples,
+    "sim_first": args.sim_first,
 }
 
 
