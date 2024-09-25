@@ -6,9 +6,6 @@
 # Author: Lloyd Pellatt
 # Email: lp349@sussex.ac.uk
 ##################################################
-import os
-
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 import argparse
 import json
@@ -16,6 +13,7 @@ import os
 import sys
 import time
 
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 import wandb
 
 from dl_har_analysis.analysis import run_train_analysis, run_test_analysis
@@ -23,17 +21,13 @@ from dl_har_analysis.analysis import run_train_analysis, run_test_analysis
 from dl_har_model.train import split_validate, loso_cross_validate
 from utils import Logger, wandb_logging, paint
 from importlib import import_module
-
-import torch
-
-from wimusim.dataset_configs.realworld import consts as rw_consts
-from wimusim.dataset_cpm import CPM
 import pickle
-
-import numpy as np
+from wimusim.dataset_cpm import CPM
+from wimusim import wimusim
+from wimusim import utils
 
 # SEEDS = [1, 2, 3]
-SEEDS = [1, 3, 4]
+SEEDS = [1, 2, 3]
 WANDB_ENTITY = "nobuyuki"
 
 N_CLASSES = {
@@ -64,7 +58,7 @@ N_CHANNELS = {
     "realdisp_ideal_n_sub": 12,
     "realdisp_ideal": 12,
     "realdisp_self": 12,
-    "realworld_cpm": 21,  # 3 (Acc) * 7 (IMUs)
+    "realworld_cpm": 21,  # 3 (AccXYZ) * 7 (IMUs)
 }
 
 
@@ -314,9 +308,9 @@ def get_args():
     )
 
     parser.add_argument(
-        "--use-sim",
+        "--use_sim",
         action="store_true",
-        help="Whether to use simulated data or not.",
+        help="Flag indicating to use unweighted loss.",
         default=False,
         required=False,
     )
@@ -408,35 +402,22 @@ sim_config = {
     "window": args.window_size,
     "stride": args.window_step_train,
     "verbose": False,
-    "resample_factor": 1,
+    "resample_factor": 2,
     "n_samples": args.n_samples,
     "sim_first": args.sim_first,
     "use_sim": args.use_sim,
 }
 
-
+# print(sim_config)
 print(sim_config)
-print(args.dataset == "realworld_cpm" and args.use_sim)
-if args.dataset == "realworld_cpm" and args.use_sim:
-    print("Use subject 1 to 13 for WIMUSim CPM")
-    # sim_config["subject_ids"] = list(range(1, 14))
-    # sim_config["subject_ids"] = list(range(1, 14))
+realdisp_path = f"../WIMUSim/data/REALDISP"
+print("Use ideal scenario (subject 1-10) for WIMUSim augmentation")
 
-    # Initialize the WIMUSimDataset (This needs to be dataset independent)
-    realworld_path = "/mnt/93f1818a-0250-400e-a86c-210a9a06e78b/realworld2016_dataset/"
-    if args.use_default_params:
-        opt_files_dir = os.path.join(
-            realworld_path, "processed/wimusim_params/opt_default"
-        )
-    else:
-        opt_files_dir = os.path.join(realworld_path, "processed/wimusim_params/opt")
-    print("Loading WIMUSim params from: ", opt_files_dir)
-
-    with open(os.path.join(opt_files_dir, "opt_files_dict.pkl"), "rb") as f:
-        opt_files_dict = pickle.load(f)
-
-    act_id_dict = {
-        act_name: act_idx for act_idx, act_name in enumerate(rw_consts.ACTIVITY_LIST)
+if args.dataset == "realdisp_ideal_n_sub" and args.use_sim:
+    print("Use ideal scenario (subject 1-10) for WIMUSim augmentation")
+    opt_files_dict = {
+        subject_id: f"{realdisp_path}/saved_params/p{subject_id:03d}_all_ideal_opt.pkl"
+        for subject_id in range(1, 11)
     }
 
     B_list, P_list, D_list, H_list = [], [], [], []
@@ -444,32 +425,54 @@ if args.dataset == "realworld_cpm" and args.use_sim:
     activity_name = []
     target_list = []
 
-    stop_id = int(config_dataset["prefix"].split("-")[1])
+    stop_id = int(config_dataset["prefix"].split("_")[1])
     print(f"Stop ID: {stop_id}")
-    for sbj_id_str, sbj_opt_dict in opt_files_dict.items():
-        for act_name, filenames in sbj_opt_dict.items():
-            print(f"{sbj_id_str} - {act_name}: {len(filenames)} files")
-            for filename in filenames:
-                with open(os.path.join(opt_files_dir, filename), "rb") as f:
-                    opt = pickle.load(f)
-                    B_list.append(opt.env.B)
-                    P_list.append(opt.env.P)
-                    H_list.append(opt.env.H)
+    for sbj_id_str, sbj_opt_filepath in opt_files_dict.items():
+        with open(sbj_opt_filepath, "rb") as f:
+            opt = pickle.load(f)
+            # Keep only RLA and LLA
+            opt.env.P.joint_imu_pairs = [("R_ELBOW", "RLA"), ("L_ELBOW", "LLA")]
+            opt.env.P.rp = {key: opt.env.P.rp[key] for key in opt.env.P.joint_imu_pairs}
+            opt.env.P.ro = {key: opt.env.P.ro[key] for key in opt.env.P.joint_imu_pairs}
+            target_imus = [imu_name for _, imu_name in opt.env.P.joint_imu_pairs]
+            opt.env.P.imu_names = target_imus
+            opt.env.H.imu_names = target_imus
+            opt.env.H.ba = {imu: opt.env.H.ba[imu] for imu in target_imus}
+            opt.env.H.bg = {imu: opt.env.H.bg[imu] for imu in target_imus}
+            opt.env.H.sa = {imu: opt.env.H.sa[imu] for imu in target_imus}
+            opt.env.H.sg = {imu: opt.env.H.sg[imu] for imu in target_imus}
 
-                    D_list.append(opt.env.D)
-                    activity_name.append(
-                        act_name
-                    )  # activity_name corresponds to the dynamics parameter
-                    groups.append(act_id_dict[act_name])
-                    target_list.append(
-                        torch.full(
-                            (opt.env.D.n_samples,),
-                            act_id_dict[act_name],
-                            dtype=torch.int64,
-                        )
-                    )
+            # Resample D to 50 Hz
+            trans_val_resampled, target_resampled = utils.resample(
+                opt.env.D.translation["XYZ"].detach().cpu().numpy(),
+                opt.meta_info["target"],
+                factor=2,
+                verbose=False,
+            )
+            D_ori_dict = {}
+            for keys in opt.env.D.orientation.keys():
+                ori_val_resampled, _ = utils.resample(
+                    opt.env.D.orientation[keys].detach().cpu().numpy(),
+                    opt.meta_info["target"],
+                    factor=2,
+                    verbose=False,
+                )
+                D_ori_dict[keys] = ori_val_resampled
 
-        if sbj_id_str == f"p{stop_id:03d}":
+            D_resampled = wimusim.WIMUSim.Dynamics(
+                translation={"XYZ": trans_val_resampled},
+                orientation=D_ori_dict,
+                sample_rate=50,
+                device=opt.env.D.device,
+            )
+
+            B_list.append(opt.env.B)
+            P_list.append(opt.env.P)
+            H_list.append(opt.env.H)
+            D_list.append(D_resampled)
+            target_list.append(target_resampled)
+
+        if sbj_id_str == stop_id:
             print(f"Finish loading WIMUSim params. - stop after loading p{stop_id:03d}")
             break
 
@@ -478,15 +481,51 @@ if args.dataset == "realworld_cpm" and args.use_sim:
         D_list=D_list,
         P_list=P_list,
         H_list=H_list,
-        groups=groups,
+        # groups=groups,
         target_list=target_list,
-        window=30,  # 1 seconds
-        stride=15,  # 0.5 seconds
-        acc_only=True,
-    )  # use activity_name for the
+        window=100,  # 1 seconds
+        stride=25,  # 0.5 seconds
+        acc_only=False,
+    )
     train_sim_data.generate_data(
-        n_combinations=100  # Just for initialization. Can be any number.
-    )  # This should be runned first before passed to the dataloader.
+        n_combinations=10  # Just for initialization. Can be any number.
+    )
+
+elif args.dataset == "realdisp_self" and args.use_sim:
+    print("Use ideal scenario (subject 1-17) for WIMUSim augmentation")
+    sim_config["wimusim_params_path_dict"] = {
+        1: "../WIMUSim/data/REALDISP/saved_params/ideal_sub1_wimusim_params_opt_with_labels.pt",
+        2: "../WIMUSim//data/REALDISP/saved_params/ideal_sub2_wimusim_params_opt_with_labels.pt",
+        3: "../WIMUSim//data/REALDISP/saved_params/ideal_sub3_wimusim_params_opt_with_labels.pt",
+        4: "../WIMUSim//data/REALDISP/saved_params/ideal_sub4_wimusim_params_opt_with_labels.pt",
+        5: "../WIMUSim//data/REALDISP/saved_params/ideal_sub5_wimusim_params_opt_with_labels.pt",
+        6: "../WIMUSim//data/REALDISP/saved_params/ideal_sub6_wimusim_params_opt_with_labels.pt",
+        7: "../WIMUSim//data/REALDISP/saved_params/ideal_sub7_wimusim_params_opt_with_labels.pt",
+        8: "../WIMUSim//data/REALDISP/saved_params/ideal_sub8_wimusim_params_opt_with_labels.pt",
+        9: "../WIMUSim//data/REALDISP/saved_params/ideal_sub9_wimusim_params_opt_with_labels.pt",
+        10: "../WIMUSim//data/REALDISP/saved_params/ideal_sub10_wimusim_params_opt_with_labels.pt",
+        11: "../WIMUSim/data/REALDISP/saved_params/ideal_sub11_wimusim_params_opt_with_labels.pt",
+        12: "../WIMUSim//data/REALDISP/saved_params/ideal_sub12_wimusim_params_opt_with_labels.pt",
+        13: "../WIMUSim//data/REALDISP/saved_params/ideal_sub13_wimusim_params_opt_with_labels.pt",
+        14: "../WIMUSim//data/REALDISP/saved_params/ideal_sub14_wimusim_params_opt_with_labels.pt",
+        15: "../WIMUSim//data/REALDISP/saved_params/ideal_sub15_wimusim_params_opt_with_labels.pt",
+        16: "../WIMUSim//data/REALDISP/saved_params/ideal_sub16_wimusim_params_opt_with_labels.pt",
+        17: "../WIMUSim//data/REALDISP/saved_params/ideal_sub17_wimusim_params_opt_with_labels.pt",
+    }
+else:
+    if args.use_sim:
+        raise ValueError(f"Invalid evaluation scenario {args.dataset}")
+
+
+# This will be used to determine the rot_list in the WIMUSim augmentation
+# You can ignore the assertion if you don't use the rotation augmentation
+if args.dataset == "realdisp_ideal":
+    scenario = "ideal"
+elif args.dataset == "realdisp_self":
+    scenario = "self"
+else:
+    scenario = None
+    assert "Unexpected scenario."
 
 
 train_args = {
@@ -506,6 +545,7 @@ train_args = {
     "weight_decay": args.weight_decay,
     "save_checkpoints": args.save_checkpoints,
     "paramix": args.paramix,
+    "scenario": scenario,
     "early_stopping": args.early_stopping,
 }
 
