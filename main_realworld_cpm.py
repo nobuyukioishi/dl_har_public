@@ -32,7 +32,8 @@ import pickle
 
 import numpy as np
 
-SEEDS = [1, 2, 3]
+# SEEDS = [1, 2, 3]
+SEEDS = [1, 3, 4]
 WANDB_ENTITY = "nobuyuki"
 
 N_CLASSES = {
@@ -370,6 +371,13 @@ def get_args():
         default=False,
         required=False,
     )
+    parser.add_argument(
+        "--use_default_params",
+        action="store_true",
+        help="Flag indicating to use default params for WIMUSim.",
+        default=False,
+        required=False,
+    )
     # "aug_list": [jitter, permutation],
     # "aug_prob": [0, 1],
     # "aug_params": [{"sigma": 0.2}, {"max_segments": 5, "seg_mode": "equal"}],
@@ -405,10 +413,11 @@ sim_config = {
     "resample_factor": 1,
     "n_samples": args.n_samples,
     "sim_first": args.sim_first,
+    "use_sim": args.use_sim,
 }
 
 
-# print(sim_config)
+print(sim_config)
 print(args.dataset == "realworld_cpm" and args.use_sim)
 if args.dataset == "realworld_cpm" and args.use_sim:
     print("Use subject 1 to 13 for WIMUSim CPM")
@@ -417,8 +426,14 @@ if args.dataset == "realworld_cpm" and args.use_sim:
 
     # Initialize the WIMUSimDataset (This needs to be dataset independent)
     realworld_path = "/mnt/93f1818a-0250-400e-a86c-210a9a06e78b/realworld2016_dataset/"
-    opt_files_dir = os.path.join(realworld_path, "processed/wimusim_params/opt")
-
+    if args.use_default_params:
+        opt_files_dir = os.path.join(
+            realworld_path, "processed/wimusim_params/opt_default"
+        )
+    else:
+        opt_files_dir = os.path.join(realworld_path, "processed/wimusim_params/opt")
+    print("Loading WIMUSim params from: ", opt_files_dir)
+    
     with open(os.path.join(opt_files_dir, "opt_files_dict.pkl"), "rb") as f:
         opt_files_dict = pickle.load(f)
 
