@@ -410,7 +410,7 @@ sim_config = {
 
 # print(sim_config)
 print(sim_config)
-realdisp_path = f"../WIMUSim/data/REALDISP"
+realdisp_path = f"./data/realdisp/"
 print("Use ideal scenario (subject 1-10) for WIMUSim augmentation")
 
 if args.dataset == "realdisp_ideal_n_sub" and args.use_sim:
