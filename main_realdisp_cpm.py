@@ -406,6 +406,7 @@ sim_config = {
     "n_samples": args.n_samples,
     "sim_first": args.sim_first,
     "use_sim": args.use_sim,
+    "use_default_params": args.use_default_params,
 }
 
 # print(sim_config)
@@ -415,10 +416,18 @@ print("Use ideal scenario (subject 1-10) for WIMUSim augmentation")
 
 if args.dataset == "realdisp_ideal_n_sub" and args.use_sim:
     print("Use ideal scenario (subject 1-10) for WIMUSim augmentation")
-    opt_files_dict = {
-        subject_id: f"{realdisp_path}/saved_params/p{subject_id:03d}_all_ideal_opt.pkl"
-        for subject_id in range(1, 11)
-    }
+    print("use default params: ", args.use_default_params)
+    if args.use_default_params:
+        opt_files_dict = {
+            subject_id: f"{realdisp_path}/saved_params/p{subject_id:03d}_all_ideal_opt_default.pkl"
+            for subject_id in range(1, 11)
+        }
+    else:
+        opt_files_dict = {
+            subject_id: f"{realdisp_path}/saved_params/p{subject_id:03d}_all_ideal_opt.pkl"
+            for subject_id in range(1, 11)
+        }
+    print(opt_files_dict)
 
     B_list, P_list, D_list, H_list = [], [], [], []
     groups = []  # Used to control the sampling process
