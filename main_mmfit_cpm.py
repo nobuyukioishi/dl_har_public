@@ -417,6 +417,7 @@ config_dataset = {
     "lazy_load": args.lazy_load,
     "scaling": args.scaling,
     "prefix": train_prefix,
+    "n_sub": args.n_sub,
 }
 
 sim_config = {
