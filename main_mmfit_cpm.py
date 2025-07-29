@@ -428,6 +428,7 @@ sim_config = {
     "n_samples": args.n_samples,
     "sim_first": args.sim_first,
     "use_sim": args.use_sim,
+    "use_default_params": args.use_default_params,
 }
 
 print(sim_config)
