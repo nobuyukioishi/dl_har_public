@@ -417,10 +417,10 @@ config_dataset = {
     "lazy_load": args.lazy_load,
     "scaling": args.scaling,
     "prefix": train_prefix,
-    "n_sub": args.n_sub,
-}
 
+}
 sim_config = {
+    "n_sub": args.n_sub,
     "dataset": args.dataset,
     "window": args.window_size,
     "stride": args.window_step_train,
